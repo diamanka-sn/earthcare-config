@@ -426,3 +426,60 @@ def plot_multi_orbit_lwp(orbites: list[dict], n_orbites_label: str) -> None:
                  fontweight=TITLE_WEIGHT, color=TITLE_COLOR)
     ax.legend(loc="upper right")
     plt.show()
+
+ 
+def _add_cloud_contours(ax, T2D, HGT, particle_type_raw, present_types,
+                        linewidth=0.8, alpha=0.9):
+    """Trace le contour extérieur de chaque type de nuage présent.
+ 
+    Pour chaque type de particule, on construit un masque binaire
+    (1 = ce type est présent, 0 sinon) puis on appelle ``contour``
+    au niveau 0.5 pour obtenir uniquement la frontière.
+ 
+    Parameters
+    ----------
+    particle_type_raw : 2D array (valeurs entières brutes, non masquées)
+    present_types : list[int]  — types effectivement présents dans la scène
+    """
+    for ptype in present_types:
+        binary = np.where(particle_type_raw == ptype, 1.0, 0.0)
+        # contour au seuil 0.5 = frontière exacte entre présent / absent
+        ax.contour(
+            T2D, HGT, binary,
+            levels=[0.5],
+            colors=[PARTICLE_COLORS[ptype]],
+            linewidths=linewidth,
+            alpha=alpha,
+        )
+ 
+ 
+def plot_temperature_and_classification(d: dict, t_min: int, t_max: int) -> None:
+    """Figure 3 — Température avec contours des types de nuages superposés."""
+    fig, (ax, ax_leg) = plt.subplots(
+        2, 1, figsize=(16, 7),
+        gridspec_kw={"height_ratios": [5, 1], "hspace": 0.154},
+    )
+    fig.patch.set_facecolor("white")
+ 
+    # Fond : température en couleur continue
+    c = ax.pcolormesh(d["T2D"], d["HGT"], np.ma.masked_invalid(d["temp_c"]),
+                      cmap=CMAP_TEMP, norm=NORM_TEMP, shading="auto")
+    cb = plt.colorbar(c, ax=ax, pad=0.01, aspect=25, shrink=0.95,
+                      ticks=np.arange(-48, -11, 4))
+    cb.set_label("Temperature °C", fontsize=8)
+ 
+    # Contours des nuages par type (sur les données brutes entières)
+    _add_cloud_contours(ax, d["T2D"], d["HGT"],
+                        d["particle_type"], d["present_type"])
+ 
+    ax.set_ylabel("Altitude / m", fontsize=10)
+    ax.set_xlabel("Time / s", fontsize=9)
+    ax.set_title("Temperature and cloud classification",
+                 fontsize=12, color=TITLE_COLOR, fontweight=TITLE_WEIGHT)
+    ax.set_ylim(3000, 6000)
+    ax.set_xlim(t_min, t_max)
+ 
+    _add_time_labels(ax, d["t"], d["t0_utc"], d["local_times"],
+                     t_min, t_max, y_utc=-0.20, y_local=-0.25)
+    _add_particle_legend(ax_leg, d["present_type"])
+    plt.show()
