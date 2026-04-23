@@ -187,7 +187,44 @@ def build_orbit_label(orbites: list[dict]) -> str:
     """Construit la chaîne lisible des numéros d'orbite pour les titres."""
     if not orbites:
         return ""
-    last = orbites[-1]
+    last = set(orbites[-1])
     frame_id  = last.get("frame_id", b"G")
     frame_str = str(frame_id).split("'")[1] if "'" in str(frame_id) else str(frame_id)
     return ", ".join(str(orb["nom_orbite"][0]) + frame_str for orb in orbites)
+
+def _decode_frame_id(raw) -> str:
+    """Décode un frame_id HDF5 (bytes, np.bytes_ ou str) en chaîne propre.
+ 
+    Exemples :  b"G"  →  "G"
+                "b'G'" →  "G"
+                "G"   →  "G"
+    """
+    if isinstance(raw, (bytes, np.bytes_)):
+        return raw.decode()
+    s = str(raw)
+    # cas np.bytes_ affiché comme "b'G'"
+    if s.startswith("b'") and s.endswith("'"):
+        return s[2:-1]
+    return s
+ 
+ 
+def build_orbit_label(orbites: list[dict]) -> str:
+    """Construit la chaîne lisible des numéros d'orbite pour les titres.
+ 
+    Le frame_id est commun à toutes les orbites d'un même produit ;
+    il est donc extrait une seule fois depuis la première orbite disponible.
+ 
+    Exemple de sortie : "09039G, 09040G, 09041G"
+    """
+    if not orbites:
+        return ""
+    frame_str = _decode_frame_id(orbites[0].get("frame_id", b"G"))
+    # Dédoublonnage tout en conservant l'ordre d'apparition
+    seen = set()
+    labels = []
+    for orb in orbites:
+        num = str(orb["nom_orbite"][0])
+        if num not in seen:
+            seen.add(num)
+            labels.append(num + frame_str)
+    return ", ".join(labels)
