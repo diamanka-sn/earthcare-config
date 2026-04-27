@@ -93,7 +93,10 @@ class GridAccumulator:
         all_params = GRID_PARAMS_1D + GRID_PARAMS_2D
 
         # Tableaux d'accumulation
+        # _sum2 = somme des carrés, nécessaire pour l'écart-type :
+        # std = sqrt(sum2/n - (sum/n)²)
         self._sum   = {p: np.zeros(shape) for p in all_params}
+        self._sum2  = {p: np.zeros(shape) for p in all_params}
         self._count = {p: np.zeros(shape, dtype=np.int32) for p in all_params}
 
         # Nombre d'orbites traitées (pour info)
@@ -164,8 +167,8 @@ class GridAccumulator:
             if raw is None:
                 continue
             values = np.where(raw < 0, np.nan, raw).astype(float)
-            _accumulate_1d(self._sum[param], self._count[param],
-                           i_lat, i_lon, values)
+            _accumulate_1d(self._sum[param], self._sum2[param],
+                           self._count[param], i_lat, i_lon, values)
 
         # --- Paramètres 2D (réduction verticale avant accumulation) --
         for param in GRID_PARAMS_2D:
@@ -178,8 +181,8 @@ class GridAccumulator:
                 arr = np.where(raw < 0, np.nan, raw).astype(float)
                 values = self._column_mean(arr)
 
-            _accumulate_1d(self._sum[param], self._count[param],
-                           i_lat, i_lon, values)
+            _accumulate_1d(self._sum[param], self._sum2[param],
+                           self._count[param], i_lat, i_lon, values)
 
         self.n_orbits += 1
 
@@ -203,6 +206,34 @@ class GridAccumulator:
                     np.nan,
                 )
             result[param] = m
+        return result
+
+    def std(self) -> dict:
+        """Retourne l'écart-type par cellule pour chaque paramètre.
+
+        Utilise la formule de Welford en une passe :
+        std = sqrt(E[X²] - E[X]²)  avec correction n/(n-1) (Bessel).
+        Les cellules avec moins de 2 mesures sont mises à NaN.
+
+        Returns
+        -------
+        dict {param: ndarray (n_lat, n_lon)}
+        """
+        result = {}
+        for param in self._sum:
+            n   = self._count[param].astype(float)
+            s   = self._sum[param]
+            s2  = self._sum2[param]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                # Variance avec correction de Bessel (n-1)
+                var = np.where(
+                    n >= 2,
+                    (s2 - s**2 / n) / (n - 1),
+                    np.nan,
+                )
+                # Protection contre les variances légèrement négatives
+                # dues aux erreurs d'arrondi flottant
+                result[param] = np.sqrt(np.maximum(var, 0.0))
         return result
 
     def count(self) -> dict:
@@ -229,6 +260,8 @@ class GridAccumulator:
         }
         for param, arr in self._sum.items():
             arrays[f"sum_{param}"]   = arr
+        for param, arr in self._sum2.items():
+            arrays[f"sum2_{param}"]  = arr
         for param, arr in self._count.items():
             arrays[f"count_{param}"] = arr
 
@@ -269,12 +302,22 @@ class GridAccumulator:
         g.n_lon    = len(lon_bins)
         g.n_orbits = int(data["_meta_n_orbits"][0])
         g._sum     = {}
+        g._sum2    = {}
         g._count   = {}
 
+        keys = set(data.files)
         all_params = GRID_PARAMS_1D + GRID_PARAMS_2D
+        shape = data[f"sum_{all_params[0]}"].shape
+
         for param in all_params:
             g._sum[param]   = data[f"sum_{param}"].copy()
             g._count[param] = data[f"count_{param}"].copy()
+            # Rétrocompatibilité : anciens caches sans sum2
+            if f"sum2_{param}" in keys:
+                g._sum2[param] = data[f"sum2_{param}"].copy()
+            else:
+                print(f"[grid] Cache ancien — sum2_{param} absent, std() indisponible pour ce param")
+                g._sum2[param] = np.zeros(shape)
 
         print(f"[grid] Grille chargée ← {filepath}  "
               f"({g.n_orbits} orbites déjà traitées, "
@@ -302,14 +345,18 @@ class GridAccumulator:
 # HELPER INTERNE — accumulation vectorisée
 # ============================================================
 
-def _accumulate_1d(sum_arr, count_arr, i_lat, i_lon, values):
+def _accumulate_1d(sum_arr, sum2_arr, count_arr, i_lat, i_lon, values):
     """Ajoute ``values`` dans les cellules (i_lat, i_lon) en ignorant les NaN.
 
-    Utilise np.add.at pour gérer correctement les doublons d'indices
-    (plusieurs points dans la même cellule lors d'un même appel).
+    Accumule simultanément sum(x) et sum(x²) pour permettre le calcul
+    de l'écart-type en une passe sans stocker toutes les valeurs.
+    Utilise np.add.at pour gérer les doublons d'indices.
     """
     valid = ~np.isnan(values)
     if not np.any(valid):
         return
-    np.add.at(sum_arr,   (i_lat[valid], i_lon[valid]), values[valid])
-    np.add.at(count_arr, (i_lat[valid], i_lon[valid]), 1)
+    v = values[valid]
+    il, jl = i_lat[valid], i_lon[valid]
+    np.add.at(sum_arr,   (il, jl), v)
+    np.add.at(sum2_arr,  (il, jl), v ** 2)
+    np.add.at(count_arr, (il, jl), 1)
