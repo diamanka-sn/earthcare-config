@@ -36,6 +36,10 @@ from plotting import (
     plot_water_paths,
     plot_polar_scatter,
     plot_multi_orbit_lwp,
+    plot_grid_lwp,
+    plot_grid_mean,
+    plot_grid_std,
+    plot_grid_lwp_iwp,
 )
 
 
@@ -181,6 +185,20 @@ def run_grid(force_rebuild: bool = False) -> GridAccumulator:
     print(f"[grid] Terminé. {grid}")
     return grid
 
+
+def plot_grid_results(grid) -> None:
+    """Trace les cartes de moyenne et d'écart-type depuis la grille.
+
+    À appeler après run_grid() :
+        grid = run_grid()
+        plot_grid_results(grid)
+    """
+    plot_grid_lwp(grid)                        # LWP moyen (remplace plot_multi_orbit_lwp)
+    plot_grid_mean(grid, "iwp", "IWP ($g/m²$)", vmin=0, vmax=100)
+    plot_grid_std(grid,  "lwp", "σ LWP ($g/m²$)")
+    plot_grid_std(grid,  "iwp", "σ IWP ($g/m²$)")
+    plot_grid_lwp_iwp(grid)                    # vue 4 panneaux : mean + std
+
 # ============================================================
 # POINT D'ENTRÉE
 # ============================================================
@@ -188,4 +206,5 @@ def run_grid(force_rebuild: bool = False) -> GridAccumulator:
 if __name__ == "__main__":
     run_single_orbit()
     run_multi_orbit()
-    run_grid()
+    grid = run_grid()
+    plot_grid_results(grid)

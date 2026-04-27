@@ -483,3 +483,169 @@ def plot_temperature_and_classification(d: dict, t_min: int, t_max: int) -> None
                      t_min, t_max, y_utc=-0.20, y_local=-0.25)
     _add_particle_legend(ax_leg, d["present_type"])
     plt.show()
+
+
+
+
+ 
+def _polar_grid_map(lon_bins, lat_bins, data_2d, title, cbar_label,
+                    vmin=None, vmax=None, cmap="rainbow",
+                    n_orbits=None):
+    """Helper interne : carte polaire pcolormesh depuis une grille lat×lon.
+ 
+    Parameters
+    ----------
+    lon_bins, lat_bins : 1D arrays  — centres des cellules
+    data_2d : ndarray (n_lat, n_lon)
+    n_orbits : int, optional  — affiché dans le sous-titre si fourni
+    """
+    LON2D, LAT2D = np.meshgrid(lon_bins, lat_bins)
+ 
+    subtitle = f"{len(lat_bins)}×{len(lon_bins)} cells"
+    if n_orbits is not None:
+        subtitle += f"  |  {n_orbits} orbits"
+ 
+    fig, ax = _make_polar_map(subtitle)
+    ax.gridlines(draw_labels=True, dms=False, x_inline=False,
+                 y_inline=False, alpha=0.3,
+                 ylocs=np.arange(-90, -55, 10))
+ 
+    _add_distance_circles(ax)
+    ax.plot(LON_REF, LAT_REF, color="#FFA500", marker=".", markersize=6,
+            linestyle="none", label="Dome C", transform=ccrs.PlateCarree())
+ 
+    pc = ax.pcolormesh(LON2D, LAT2D, data_2d,
+                       cmap=cmap, vmin=vmin, vmax=vmax,
+                       transform=ccrs.PlateCarree(), shading="auto")
+ 
+    cbar = plt.colorbar(pc, ax=ax, orientation="vertical", shrink=0.7, pad=0.05)
+    cbar.set_label(cbar_label, fontsize=10)
+    ax.set_title(title, fontsize=11, fontweight=TITLE_WEIGHT, color=TITLE_COLOR)
+    ax.legend(loc="upper right")
+    plt.show()
+ 
+ 
+def plot_grid_lwp(grid) -> None:
+    """Carte polaire LWP moyen depuis une grille GridAccumulator.
+ 
+    Remplace plot_multi_orbit_lwp en utilisant la grille précalculée
+    plutôt que les traces orbit-par-orbit. Le résultat est identique
+    mais beaucoup plus rapide (plus de boucle sur les orbites).
+    """
+    means = grid.mean()
+    _polar_grid_map(
+        grid.lon_bins, grid.lat_bins,
+        means["lwp"],
+        title="Liquid Water Path — mean",
+        cbar_label="LWP ($g/m²$)",
+        vmin=0, vmax=40,
+        n_orbits=grid.n_orbits,
+    )
+ 
+ 
+def plot_grid_mean(grid, param: str = "lwp",
+                   cbar_label: str | None = None,
+                   vmin=None, vmax=None) -> None:
+    """Carte polaire de la moyenne d'un paramètre quelconque de la grille.
+ 
+    Parameters
+    ----------
+    param : str
+        Nom du paramètre (ex. "lwp", "iwp", "iwc", "lwc", "temperature").
+    cbar_label : str, optional
+        Étiquette de la colorbar. Si None, utilise ``param``.
+    """
+    means = grid.mean()
+    if param not in means:
+        raise KeyError(f"Paramètre '{param}' absent de la grille. "
+                       f"Disponibles : {list(means)}")
+    _polar_grid_map(
+        grid.lon_bins, grid.lat_bins,
+        means[param],
+        title=f"{param.upper()} — mean",
+        cbar_label=cbar_label or param,
+        vmin=vmin, vmax=vmax,
+        n_orbits=grid.n_orbits,
+    )
+ 
+ 
+def plot_grid_std(grid, param: str = "lwp",
+                  cbar_label: str | None = None,
+                  vmin=0, vmax=None) -> None:
+    """Carte polaire de l'écart-type d'un paramètre de la grille.
+ 
+    Parameters
+    ----------
+    param : str
+        Nom du paramètre (ex. "lwp", "iwp", "iwc", "lwc", "temperature").
+    """
+    stds = grid.std()
+    if param not in stds:
+        raise KeyError(f"Paramètre '{param}' absent de la grille. "
+                       f"Disponibles : {list(stds)}")
+    _polar_grid_map(
+        grid.lon_bins, grid.lat_bins,
+        stds[param],
+        title=f"{param.upper()} — std dev",
+        cbar_label=cbar_label or f"σ {param}",
+        cmap="YlOrRd",
+        vmin=vmin, vmax=vmax,
+        n_orbits=grid.n_orbits,
+    )
+ 
+ 
+def plot_grid_lwp_iwp(grid) -> None:
+    """Deux cartes côte à côte : LWP moyen et IWP moyen.
+ 
+    Vue de synthèse rapide pour comparer les deux colonnes d'eau.
+    """
+    means = grid.mean()
+    stds  = grid.std()
+    LON2D, LAT2D = np.meshgrid(grid.lon_bins, grid.lat_bins)
+ 
+    proj = ccrs.SouthPolarStereo()
+    fig  = plt.figure(figsize=(20, 8))
+    fig.patch.set_facecolor("white")
+    fig.suptitle(
+        f"LWP & IWP  |  {grid.n_orbits} orbits  |  "
+        f"grid {grid.dlat}°×{grid.dlon}°",
+        fontsize=12, fontweight=TITLE_WEIGHT, color=TITLE_COLOR,
+    )
+ 
+    specs = [
+        ("lwp", "LWP mean ($g/m²$)",   0,  40,  "rainbow"),
+        ("iwp", "IWP mean ($g/m²$)",   0, 100,  "rainbow"),
+        ("lwp", "LWP std ($g/m²$)",    0,  20,  "YlOrRd"),
+        ("iwp", "IWP std ($g/m²$)",    0,  50,  "YlOrRd"),
+    ]
+    sources = [means["lwp"], means["iwp"], stds["lwp"], stds["iwp"]]
+    labels  = ["LWP mean", "IWP mean", "LWP std", "IWP std"]
+ 
+    for col, (data, (param, cbar_label, vmin, vmax, cmap), label) in enumerate(
+        zip(sources, specs, labels)
+    ):
+        ax = fig.add_subplot(1, 4, col + 1, projection=proj)
+        ax.set_extent([-180, 180, -90, -60], ccrs.PlateCarree())
+        ax.add_feature(cfeature.LAND)
+        ax.add_feature(cfeature.OCEAN)
+        ax.add_feature(cfeature.COASTLINE)
+ 
+        theta  = np.linspace(0, 2 * np.pi, 100)
+        verts  = np.vstack([np.sin(theta), np.cos(theta)]).T
+        circle = mpath.Path(verts * 0.5 + [0.5, 0.5])
+        ax.set_boundary(circle, transform=ax.transAxes)
+        ax.gridlines(alpha=0.3)
+ 
+        pc = ax.pcolormesh(LON2D, LAT2D, data,
+                           cmap=cmap, vmin=vmin, vmax=vmax,
+                           transform=ccrs.PlateCarree(), shading="auto")
+        ax.plot(LON_REF, LAT_REF, color="#FFA500", marker=".", markersize=5,
+                linestyle="none", transform=ccrs.PlateCarree())
+        _add_distance_circles(ax)
+ 
+        plt.colorbar(pc, ax=ax, orientation="horizontal",
+                     shrink=0.8, pad=0.04, label=cbar_label)
+        ax.set_title(label, fontsize=10, fontweight=TITLE_WEIGHT, color=TITLE_COLOR)
+ 
+    plt.tight_layout()
+    plt.show()
