@@ -109,10 +109,21 @@ class GridAccumulator:
     def _cell_indices(self, lat_arr: np.ndarray, lon_arr: np.ndarray):
         """Retourne les indices (i_lat, i_lon) pour chaque point de la trace.
 
-        Les points hors grille sont signalés par un index -1.
+        Les points NaN (coordonnées manquantes) reçoivent l'indice 0 mais
+        sont neutralisés ensuite par le masque valid dans _accumulate_1d
+        (leurs valeurs sont NaN donc ignorées).
         """
-        i_lat = np.floor((lat_arr - self.lat_bins[0]) / self.dlat).astype(int)
-        i_lon = np.floor((lon_arr - self.lon_bins[0]) / self.dlon).astype(int)
+        lat = np.asarray(lat_arr, dtype=float)
+        lon = np.asarray(lon_arr, dtype=float)
+
+        # Remplacer les NaN par la borne inférieure pour éviter le cast invalide.
+        # Ces points seront de toute façon exclus par le masque ~np.isnan(values)
+        # dans _accumulate_1d car lat/lon NaN implique une mesure invalide.
+        lat_safe = np.where(np.isnan(lat), self.lat_bins[0], lat)
+        lon_safe = np.where(np.isnan(lon), self.lon_bins[0], lon)
+
+        i_lat = np.floor((lat_safe - self.lat_bins[0]) / self.dlat).astype(int)
+        i_lon = np.floor((lon_safe - self.lon_bins[0]) / self.dlon).astype(int)
 
         # Clamp : points exactement sur le bord supérieur → dernière cellule
         i_lat = np.clip(i_lat, 0, self.n_lat - 1)
@@ -126,9 +137,18 @@ class GridAccumulator:
 
     @staticmethod
     def _column_mean(arr2d: np.ndarray) -> np.ndarray:
-        """Moyenne verticale ignorant les NaN — retourne un vecteur (n_temps,)."""
+        """Moyenne verticale ignorant les NaN — retourne un vecteur (n_temps,).
+
+        Les profils entièrement NaN (colonne vide) retournent NaN sans warning :
+        nanmean sur une tranche vide lève un RuntimeWarning, on le supprime
+        explicitement et on remet NaN à la main via le masque all-NaN.
+        """
         with np.errstate(all="ignore"):
-            return np.nanmean(arr2d, axis=1)
+            result = np.nanmean(arr2d, axis=1)
+        # Profils où toutes les valeurs sont NaN → résultat doit être NaN
+        all_nan = np.all(np.isnan(arr2d), axis=1)
+        result[all_nan] = np.nan
+        return result
 
     @staticmethod
     def _dominant_particle(arr2d: np.ndarray) -> np.ndarray:
@@ -157,9 +177,13 @@ class GridAccumulator:
             Doit contenir au minimum les clés ``lat``, ``lon``, et les
             paramètres listés dans GRID_PARAMS_1D / GRID_PARAMS_2D.
         """
-        lat = orbit_data["lat"]
-        lon = orbit_data["lon"]
+        lat = np.asarray(orbit_data["lat"], dtype=float)
+        lon = np.asarray(orbit_data["lon"], dtype=float)
         i_lat, i_lon = self._cell_indices(lat, lon)
+
+        # Masque des points sans coordonnée valide : ces points ne doivent
+        # jamais contribuer à la grille, quelle que soit la valeur du paramètre.
+        invalid_pos = np.isnan(lat) | np.isnan(lon)
 
         # --- Paramètres 1D -----------------------------------------
         for param in GRID_PARAMS_1D:
@@ -167,6 +191,7 @@ class GridAccumulator:
             if raw is None:
                 continue
             values = np.where(raw < 0, np.nan, raw).astype(float)
+            values[invalid_pos] = np.nan   # neutraliser les coords invalides
             _accumulate_1d(self._sum[param], self._sum2[param],
                            self._count[param], i_lat, i_lon, values)
 
@@ -181,6 +206,7 @@ class GridAccumulator:
                 arr = np.where(raw < 0, np.nan, raw).astype(float)
                 values = self._column_mean(arr)
 
+            values[invalid_pos] = np.nan   # neutraliser les coords invalides
             _accumulate_1d(self._sum[param], self._sum2[param],
                            self._count[param], i_lat, i_lon, values)
 

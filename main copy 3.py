@@ -147,8 +147,8 @@ def run_grid(force_rebuild: bool = False) -> GridAccumulator:
     """Accumule toutes les orbites (ESA + JAXA) sur la grille lat/lon.
 
     Si le cache ``GRID_CACHE`` existe et que ``force_rebuild=False``,
-    la grille est rechargée depuis le disque sans relire aucun fichier
-    HDF5. Sinon, toutes les orbites sont retraitées depuis zéro.
+    la grille est rechargée depuis le disque instantanément sans relire
+    aucun fichier HDF5.
 
     Parameters
     ----------
@@ -157,15 +157,24 @@ def run_grid(force_rebuild: bool = False) -> GridAccumulator:
 
     Returns
     -------
-    GridAccumulator  prêt pour grid.mean() ou grid.count()
+    GridAccumulator  prêt pour grid.mean(), grid.std() ou grid.count()
     """
     from pathlib import Path
 
-    if not force_rebuild and Path(GRID_CACHE).exists():
-        print("[grid] Cache trouvé — chargement rapide...")
-        return GridAccumulator.load(GRID_CACHE)
+    cache_path = Path(GRID_CACHE)
 
-    print("[grid] Construction de la grille depuis les orbites brutes...")
+    # --- Retour rapide si cache valide --------------------------
+    if not force_rebuild and cache_path.exists():
+        print(f"[grid] Cache trouvé ({cache_path}) — chargement sans relire les HDF5")
+        return GridAccumulator.load(str(cache_path))
+
+    if force_rebuild:
+        print("[grid] force_rebuild=True — recalcul complet demandé")
+    else:
+        print(f"[grid] Cache absent ({cache_path}) — construction depuis les orbites brutes")
+
+    # --- Créer le dossier de cache si nécessaire ----------------
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Chargement ESA + JAXA ----------------------------------
     download_multi_period(DOWNLOAD_PERIODS)
@@ -174,17 +183,25 @@ def run_grid(force_rebuild: bool = False) -> GridAccumulator:
     jaxa_raw = load_jaxa_orbits(JAXA_DATA_DIR)
     all_raw  = merge_orbit_sources(esa_raw, jaxa_raw, sort_by="time")
 
+    if not all_raw:
+        raise RuntimeError("[grid] Aucune orbite chargée — vérifiez les chemins et dates.")
+
     # --- Accumulation orbite par orbite -------------------------
     grid = GridAccumulator(dlat=1.0, dlon=10.0)
     for i, orb in enumerate(all_raw, 1):
         grid.accumulate(orb)
+        # Sauvegarde intermédiaire toutes les 10 orbites
+        # → reprise possible si interruption
         if i % 10 == 0 or i == len(all_raw):
-            print(f"  {i}/{len(all_raw)} orbites traitées...")
-            grid.save(GRID_CACHE)   # sauvegarde intermédiaire
+            print(f"  {i}/{len(all_raw)} orbites accumulées...")
+            try:
+                grid.save(str(cache_path))
+            except Exception as e:
+                print(f"  [grid] Impossible de sauvegarder le cache : {e}")
 
-    print(f"[grid] Terminé. {grid}")
+    print(f"[grid] Terminé — {grid}")
+    print(f"[grid] Cache sauvegardé -> {cache_path.resolve()}")
     return grid
-
 
 def plot_grid_results(grid) -> None:
     """Trace les cartes de moyenne et d'écart-type depuis la grille.
