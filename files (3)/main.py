@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
+from pathlib import Path
 # ============================================================
 # main.py
 # Point d'entrée — orchestre téléchargement, traitement et
@@ -40,6 +41,7 @@ from plotting import (
     plot_grid_mean,
     plot_grid_std,
     plot_grid_lwp_iwp,
+    plot_orbits_by_period,
 )
 
 
@@ -101,8 +103,14 @@ def run_single_orbit():
 # ============================================================
 
 # Dossier contenant les fichiers .h5 téléchargés depuis le portail JAXA.
-# Modifier ce chemin selon votre arborescence locale.
-JAXA_DATA_DIR = "./data/jaxa"
+# Détecte si on est dans un script ou dans Jupyter.
+# __file__ n'existe pas dans Jupyter → répertoire courant utilisé à la place.
+try:
+    _HERE = Path(__file__).resolve().parent   # python main.py
+except NameError:
+    _HERE = Path.cwd()                        # Jupyter (%run / notebook)
+
+JAXA_DATA_DIR = str(_HERE / "data" / "jaxa")
 
 
 def run_multi_orbit():
@@ -132,6 +140,10 @@ def run_multi_orbit():
     # --- Carte multi-orbites --------------------------------
     plot_multi_orbit_lwp(orbites, n_orbites_label)
 
+    # Cartes par periode de 5 jours
+    plot_orbits_by_period(all_raw, param="lwp", period_days=5, vmin=0, vmax=40)
+    plot_orbits_by_period(all_raw, param="iwp", period_days=5, vmin=0, vmax=100)
+
 
 
 # ============================================================
@@ -140,7 +152,7 @@ def run_multi_orbit():
 
 # Fichier de cache : l'accumulation reprend où elle s'est arrêtée
 # si le fichier existe déjà.
-GRID_CACHE = "./data/grid_cache.nc"
+GRID_CACHE = str(_HERE / "data" / "grid_cache.nc")
 
 
 def run_grid(force_rebuild: bool = False) -> GridAccumulator:
@@ -159,8 +171,6 @@ def run_grid(force_rebuild: bool = False) -> GridAccumulator:
     -------
     GridAccumulator  prêt pour grid.mean(), grid.std() ou grid.count()
     """
-    from pathlib import Path
-
     cache_path = Path(GRID_CACHE)
 
     # --- Retour rapide si cache valide --------------------------
