@@ -1340,3 +1340,45 @@ def descriptive_stats(orbites: list[dict],
     print("=" * 60 + "\n")
 
     return df
+
+def describe_lwp_iwp(orbites: list[dict],
+                     params: list[str] | None = None) -> "pd.DataFrame":
+    """Construit un DataFrame pandas avec LWP et IWP puis appelle describe().
+
+    Parameters
+    ----------
+    orbites : list[dict]
+        Orbites brutes (sortie de load_multi_orbits / merge_orbit_sources).
+    params : list[str], optional
+        Parametres a analyser. Par defaut : ["lwp", "iwp"].
+
+    Returns
+    -------
+    pandas.DataFrame  retourne par describe() — affiche automatiquement
+    dans Jupyter sous forme de tableau HTML.
+
+    Example
+    -------
+    >>> df = describe_lwp_iwp(all_raw)
+    >>> df = describe_lwp_iwp(all_raw, params=["lwp", "iwp", "surface_elevation"])
+    """
+    import pandas as pd
+
+    if params is None:
+        params = ["lwp", "iwp"]
+
+    # Construire le DataFrame : une colonne par parametre
+    # On tronque toutes les colonnes a la longueur minimale pour aligner les lignes
+    series = {}
+    for param in params:
+        values = _collect_param(orbites, param)
+        series[param] = values
+
+    # Alignement : longueur minimale commune
+    n_min = min(len(v) for v in series.values()) if series else 0
+    df = pd.DataFrame({p: v[:n_min] for p, v in series.items()})
+
+    print("\nDataFrame shape :", df.shape)
+    stats = df.describe()
+    print(stats.to_string())
+    return stats
