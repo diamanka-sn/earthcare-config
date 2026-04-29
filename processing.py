@@ -228,3 +228,62 @@ def build_orbit_label(orbites: list[dict]) -> str:
             seen.add(num)
             labels.append(num + frame_str)
     return ", ".join(labels)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    import pandas as pd
+import numpy as np
+
+orbites = prepare_multi_orbits(raw_orbits)
+
+# --- Aplatir toutes les orbites en un seul DataFrame ---
+rows = []
+for orb in orbites:
+    n = len(orb["lat"])
+    for i in range(n):
+        rows.append({
+            "nom_orbite": orb["nom_orbite"],
+            "lat":        orb["lat"][i],
+            "lon":        orb["lon"][i],
+            "lwp":        orb["lwp"][i],
+            "iwp":        orb["iwp"][i],
+        })
+
+df = pd.DataFrame(rows)
+
+# --- Statistiques descriptives ---
+print("=== Statistiques descriptives (lwp & iwp) ===")
+print(df[["lwp", "iwp"]].describe())
+
+# --- Orbites ayant au moins un point avec lwp > 100 ou iwp > 100 ---
+mask = (df["lwp"] > 100) | (df["iwp"] > 100)
+orbites_flagged = df[mask]["nom_orbite"].unique()
+
+print(f"\n=== Orbites avec lwp ou iwp > 100 ({len(orbites_flagged)}) ===")
+for nom in orbites_flagged:
+    subset = df[df["nom_orbite"] == nom]
+    max_lwp = subset["lwp"].max()
+    max_iwp = subset["iwp"].max()
+    n_pts   = mask[df["nom_orbite"] == nom].sum()
+    print(f"  {nom:30s}  max_lwp={max_lwp:8.2f}  max_iwp={max_iwp:8.2f}  pts>{n_pts}")
