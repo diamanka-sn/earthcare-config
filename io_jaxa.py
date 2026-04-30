@@ -69,3 +69,29 @@ def merge_orbit_sources(esa_orbits: list[dict],
     print(f"[merge] {len(esa_orbits)} orbite(s) ESA  +  {len(jaxa_orbits)} orbite(s) JAXA"
           f"  →  {len(merged)} au total, triées par '{sort_by}'.")
     return merged
+
+
+from datetime import datetime
+
+def merge_orbit_sources(esa_orbits: list[dict],
+                        jaxa_orbits: list[dict],
+                        sort_by: str = "start_time") -> list[dict]:
+
+    def _parse_start_time(val) -> datetime:
+        """Décode np.bytes_(b'UTC=2025-12-02T01:17:31') → datetime."""
+        if val is None:
+            return datetime.min
+        # Décoder bytes si nécessaire
+        if isinstance(val, (bytes, np.bytes_)):
+            val = val.decode("utf-8")
+        # Supprimer le préfixe "UTC="
+        val = val.removeprefix("UTC=")
+        return datetime.fromisoformat(val)
+
+    def _sort_key(orb):
+        return _parse_start_time(orb.get(sort_by))
+
+    merged = sorted(esa_orbits + jaxa_orbits, key=_sort_key)
+    print(f"[merge] {len(esa_orbits)} orbite(s) ESA  +  {len(jaxa_orbits)} orbite(s) JAXA"
+          f"  →  {len(merged)} au total, triées par '{sort_by}'.")
+    return merged
