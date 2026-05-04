@@ -95,3 +95,14 @@ def merge_orbit_sources(esa_orbits: list[dict],
     print(f"[merge] {len(esa_orbits)} orbite(s) ESA  +  {len(jaxa_orbits)} orbite(s) JAXA"
           f"  →  {len(merged)} au total, triées par '{sort_by}'.")
     return merged
+
+    # Colonnes (orbites) ayant au moins une valeur lwp > 100
+orbites_lwp_100 = df.columns[(df > 100).any()].tolist()
+print(orbites_lwp_100)
+
+# Nombre de points lwp > 100 par orbite, triés décroissant
+counts = (df > 100).sum().sort_values(ascending=False)
+print(counts.head(10))  # top 10
+
+# L'orbite avec le plus de points
+print(counts.idxmax())
