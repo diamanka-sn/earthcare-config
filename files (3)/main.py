@@ -235,3 +235,284 @@ if __name__ == "__main__":
     run_multi_orbit()
     grid = run_grid()
     plot_grid_results(grid)
+
+
+
+
+#!/usr/bin/env python
+# coding: utf-8
+from pathlib import Path
+# ============================================================
+# main.py
+# Point d'entrée — orchestre téléchargement, traitement et
+# visualisation pour ECA_JXBA_ACM_CLP_2B.
+#
+# Usage :
+#   python main.py
+#   # ou dans Jupyter : %run main.py
+# ============================================================
+
+from config import (
+    ORBIT_FRAME, DATE_START, DATE_END,
+    T_MIN, T_MAX,
+    DOWNLOAD_PERIODS,
+    HDF5_FIELDS_ORBIT_META,
+)
+from io_data import (
+    download_product, download_multi_period,
+    search_product, load_orbit, load_multi_orbits, get_t0_utc,
+)
+from io_jaxa import load_jaxa_orbits, merge_orbit_sources
+from gridding import DailyGridAccumulator
+from processing import (
+    prepare_single_orbit, prepare_multi_orbits, build_orbit_label,
+    save_multi_orbits, load_multi_orbits_nc,
+)
+from plotting import (
+    plot_cloud_classification,
+    plot_temperature,
+    plot_temperature_and_classification,
+    plot_lat_lon,
+    plot_distance,
+    plot_ice_water_content,
+    plot_liquid_water_content,
+    plot_water_paths,
+    plot_polar_scatter,
+    plot_multi_orbit_lwp,
+    plot_grid_lwp,
+    plot_grid_mean,
+    plot_grid_std,
+    plot_grid_lwp_iwp,
+    plot_grid_count,
+    plot_grid_count_histogram,
+    plot_orbits_by_period,
+    plot_distribution,
+    plot_time_series,
+    plot_correlation_lwp_iwp,
+    plot_latitudinal_profile,
+    plot_eda,
+    descriptive_stats,
+    describe_lwp_iwp,
+    describe_by_orbit,
+    orbites_above_threshold,
+)
+
+
+# ============================================================
+# SECTION 1 — Orbite unique (analyse fine)
+# ============================================================
+
+def run_single_orbit():
+    """Pipeline complet pour une orbite unique."""
+
+    # --- Téléchargement & recherche ---
+    download_product(ORBIT_FRAME, DATE_START, DATE_END)
+    ds = search_product(DATE_START, DATE_END, orbit_and_frame=ORBIT_FRAME)
+    display(ds)
+
+    fp      = ds.filepath[0]
+    t0_utc  = get_t0_utc(fp)
+    raw     = load_orbit(fp)
+
+    # --- Prétraitement ---
+    d = prepare_single_orbit(raw, t0_utc)
+    d["t0_utc"] = t0_utc   # transmis aux fonctions de labels
+
+    print(f"Fichier   : {fp}")
+    print(f"Shapes    — particle_type: {d['particle_type'].shape} "
+          f"| temperature: {d['temperature'].shape} "
+          f"| height: {d['HGT'].shape}")
+
+    # --- Figures section 1 : coupes verticales ---------------
+    plot_cloud_classification(d, T_MIN, T_MAX)
+    plot_temperature(d, T_MIN, T_MAX)
+    plot_temperature_and_classification(d, T_MIN, T_MAX)
+
+    # --- Figures section 2 : profils 1D ---------------------
+    plot_lat_lon(d, T_MIN, T_MAX)
+    plot_distance(d)
+    plot_ice_water_content(d, T_MIN, T_MAX)
+    plot_liquid_water_content(d, T_MIN, T_MAX)
+    plot_water_paths(d, T_MIN, T_MAX)
+
+    # --- Figures section 3 : cartes polaires ----------------
+    plot_polar_scatter(
+        d["lon"], d["lat"], d["iwp_plot"],
+        title="Liquid Water Path", cbar_label="LWP ($g/m²$)",
+        t_utc_start=d["t_utc_start"], t_utc_end=d["t_utc_end"],
+        orbit_id=ORBIT_FRAME, vmin=0, vmax=50,
+    )
+    plot_polar_scatter(
+        d["lon"], d["lat"], d["iwp_plot"],
+        title="Ice Water Path", cbar_label="IWP ($g/m²$)",
+        t_utc_start=d["t_utc_start"], t_utc_end=d["t_utc_end"],
+        orbit_id=ORBIT_FRAME, vmin=0, vmax=100,
+        gridlines_labels=True,
+    )
+
+
+# ============================================================
+# SECTION 2 — Multi-orbites (carte de synthèse ESA + JAXA)
+# ============================================================
+
+# Dossier contenant les fichiers .h5 téléchargés depuis le portail JAXA.
+# Détecte si on est dans un script ou dans Jupyter.
+# __file__ n'existe pas dans Jupyter → répertoire courant utilisé à la place.
+try:
+    _HERE = Path(__file__).resolve().parent   # python main.py
+except NameError:
+    _HERE = Path.cwd()                        # Jupyter (%run / notebook)
+
+JAXA_DATA_DIR = str(_HERE / "data" / "jaxa")
+
+
+def run_multi_orbit(force_rebuild: bool = False):
+    """Pipeline multi-orbites sur une saison — fusionne ESA et JAXA.
+
+    Si le cache ORBITES_CACHE existe et que force_rebuild=False,
+    les orbites sont rechargees instantanement depuis le .nc
+    sans relire aucun fichier HDF5.
+
+    Parameters
+    ----------
+    force_rebuild : bool, default False
+        Forcer le rechargement complet depuis les HDF5.
+    """
+    from pathlib import Path
+
+    # --- Retour rapide si cache valide ----------------------
+    if not force_rebuild and Path(ORBITES_CACHE).exists():
+        print(f"[orbites] Cache trouve ({ORBITES_CACHE})")
+        orbites = load_multi_orbits_nc(ORBITES_CACHE)
+        n_orbites_label = ", ".join(o["orbit_id"] for o in orbites)
+        plot_multi_orbit_lwp(orbites, n_orbites_label)
+        plot_orbits_by_period(orbites, param="lwp", period_days=5, vmin=0, vmax=40)
+        plot_orbits_by_period(orbites, param="iwp", period_days=5, vmin=0, vmax=100)
+        return
+
+    # --- Téléchargement et chargement ESA + JAXA ------------
+    download_multi_period(DOWNLOAD_PERIODS)
+    ds_multi = search_product(DATE_START, DATE_END, frame_id="G")
+    display(ds_multi)
+
+    esa_raw  = load_multi_orbits(ds_multi.filepath,
+                                 extra_fields=HDF5_FIELDS_ORBIT_META)
+    jaxa_raw = load_jaxa_orbits(JAXA_DATA_DIR,
+                                extra_fields=HDF5_FIELDS_ORBIT_META)
+    all_raw  = merge_orbit_sources(esa_raw, jaxa_raw, sort_by="time")
+
+    orbites         = prepare_multi_orbits(all_raw)
+    n_orbites_label = build_orbit_label(all_raw)
+
+    # --- Sauvegarde du cache --------------------------------
+    save_multi_orbits(orbites, ORBITES_CACHE)
+
+    # --- Figures --------------------------------------------
+    plot_multi_orbit_lwp(orbites, n_orbites_label)
+    plot_orbits_by_period(orbites, param="lwp", period_days=5, vmin=0, vmax=40)
+    plot_orbits_by_period(orbites, param="iwp", period_days=5, vmin=0, vmax=100)
+def run_grid(force_rebuild: bool = False) -> DailyGridAccumulator:
+    """Accumule toutes les orbites jour par jour sur la grille lat/lon.
+
+    Si le cache GRID_CACHE existe et que force_rebuild=False,
+    la grille est rechargee instantanement depuis le .nc.
+
+    Parameters
+    ----------
+    force_rebuild : bool, default False
+
+    Returns
+    -------
+    DailyGridAccumulator
+    """
+    from pathlib import Path
+
+    cache_path = Path(GRID_CACHE)
+
+    if not force_rebuild and cache_path.exists():
+        print(f"[grid] Cache trouvé ({cache_path})")
+        return DailyGridAccumulator.load(str(cache_path))
+
+    print("[grid] Construction de la grille depuis les orbites brutes...")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    download_multi_period(DOWNLOAD_PERIODS)
+    ds_multi = search_product(DATE_START, DATE_END, frame_id="G")
+    esa_raw  = load_multi_orbits(ds_multi.filepath)
+    jaxa_raw = load_jaxa_orbits(JAXA_DATA_DIR)
+    all_raw  = merge_orbit_sources(esa_raw, jaxa_raw, sort_by="time")
+
+    if not all_raw:
+        raise RuntimeError("[grid] Aucune orbite chargée.")
+
+    grid = DailyGridAccumulator(dlat=1.0, dlon=10.0)
+    for i, orb in enumerate(all_raw, 1):
+        grid.accumulate(orb)
+        if i % 10 == 0 or i == len(all_raw):
+            print(f"  {i}/{len(all_raw)} orbites accumulées...")
+            try:
+                grid.save(str(cache_path))
+            except Exception as e:
+                print(f"  [grid] Sauvegarde impossible : {e}")
+
+    print(f"[grid] Terminé — {grid}")
+    return grid
+def plot_grid_results(grid: DailyGridAccumulator,
+                      day: str | None = None,
+                      d1: str | None = None,
+                      d2: str | None = None) -> None:
+    """Cartes de moyenne et écart-type depuis la grille journalière.
+
+    Utilisation :
+        plot_grid_results(grid)                          # tous les jours
+        plot_grid_results(grid, day="2025-12-30")        # un seul jour
+        plot_grid_results(grid, d1="2025-12-01", d2="2026-01-31")  # plage
+    """
+    if day is not None:
+        means = grid.mean(day)
+        stds  = grid.std(day)
+        label = day
+    elif d1 is not None and d2 is not None:
+        means = grid.mean_range(d1, d2)
+        stds  = grid.std_range(d1, d2)
+        label = f"{d1} -> {d2}"
+    else:
+        # Tous les jours disponibles
+        d1 = grid.dates[0]
+        d2 = grid.dates[-1]
+        means = grid.mean_range(d1, d2)
+        stds  = grid.std_range(d1, d2)
+        label = f"{d1} -> {d2}"
+
+    print(f"[plot] Cartes pour : {label}")
+
+    # Construire un objet minimal compatible avec _polar_grid_map
+    class _FakeGrid:
+        pass
+    fg = _FakeGrid()
+    fg.lon_bins = grid.lon_bins
+    fg.lat_bins = grid.lat_bins
+    fg.n_orbits = grid.n_orbits
+
+    # Injecter mean/std dans le fake grid pour réutiliser les fonctions existantes
+    fg._means = means
+    fg._stds  = stds
+    fg.mean   = lambda: means
+    fg.std    = lambda: stds
+
+    plot_grid_mean(fg, "lwp", "LWP mean (g/m2)", vmin=0, vmax=40)
+    plot_grid_mean(fg, "iwp", "IWP mean (g/m2)", vmin=0, vmax=100)
+    plot_grid_std(fg,  "lwp", "LWP std (g/m2)")
+    plot_grid_std(fg,  "iwp", "IWP std (g/m2)")
+    plot_grid_count(grid, param="lwp", day=day, d1=d1, d2=d2)
+    plot_grid_count_histogram(grid, param="lwp", day=day, d1=d1, d2=d2)
+# ============================================================
+# POINT D'ENTRÉE
+# ============================================================
+
+if __name__ == "__main__":
+    run_single_orbit()
+    run_multi_orbit()
+    grid = run_grid()
+    plot_grid_results(grid)
+    run_eda()
