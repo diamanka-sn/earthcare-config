@@ -89,4 +89,5 @@ HDF5_FIELDS = {
 HDF5_FIELDS_ORBIT_META = {
     "nom_orbite": "HeaderData/VariableProductHeader/MainProductHeader/orbitNumber",
     "frame_id":   "HeaderData/VariableProductHeader/MainProductHeader/frameID",
+    "start_time": "HeaderData/VariableProductHeader/MainProductHeader/sensingStartTime",
 }
