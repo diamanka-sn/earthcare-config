@@ -1559,3 +1559,16 @@ def orbites_above_threshold(orbites: list[dict],
         plt.show()
 
     return filtered
+
+    for orb in filtered:
+    values = np.asarray(orb.get(param, []), dtype=float)
+    values = np.where(values < 0, np.nan, values)
+    # Masquer les points sous le seuil
+    values = np.where(values <= threshold, np.nan, values)
+
+    # Garder seulement lat/lon des points valides
+    mask = ~np.isnan(values)
+    sc = ax.scatter(orb["lon"][mask], orb["lat"][mask],
+                    c=values[mask], cmap="rainbow", s=6,
+                    vmin=threshold, vmax=vmax_plot,
+                    transform=ccrs.PlateCarree(), zorder=5)
